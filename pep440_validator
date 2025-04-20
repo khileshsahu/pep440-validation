@@ -1,0 +1,76 @@
+import sys, re
+from packaging.version import Version, InvalidVersion
+
+PEP440_REFERENCE = "Reference: https://peps.python.org/pep-0440/"
+
+# Mapping of common PEP 440 errors to hints
+HINTS = {
+    "missing patch version": "Ensure your version follows 'X.Y.Z' (e.g., 1.0 → 1.0.0).",
+    "leading dot": "Remove the leading dot from the version (e.g., .1.0.0 → 1.0.0).",
+    "incorrect separator": "Use the correct format for pre-releases (e.g., 1.0.0-rc1 → 1.0.0rc1).",
+    "invalid metadata": "Remove special characters from the local version (e.g., 1.0.0+abc!@# → 1.0.0+abc).",
+    "extra zeroes": "Avoid leading zeros in segments (e.g., 01.02.03 → 1.2.3).",
+    "missing prefix": "Use 'devN' instead of '-devN' (e.g., 1.0.0-dev1 → 1.0.0.dev1).",
+    "incorrect post-release": "Post-releases should use 'postN' (e.g., 1.0.0.post-1 → 1.0.0.post1).",
+    "invalid characters": "Only alphanumeric characters, dots, and dashes are allowed."
+}
+
+def get_hint(version_str):
+    """Detects the likely reason for an invalid version and returns a hint."""
+    if version_str.startswith("."):
+        return HINTS["leading dot"]
+    if "--" in version_str or "_" in version_str:
+        return HINTS["incorrect separator"]
+    if "dev-" in version_str or "-dev" in version_str:
+        return HINTS["missing prefix"]
+    if "post-" in version_str or "-post" in version_str:
+        return HINTS["incorrect post-release"]
+    if "+!" in version_str or "@#" in version_str:
+        return HINTS["invalid metadata"]
+    if any(part.startswith("0") and part != "0" for part in version_str.split(".")):
+        return HINTS["extra zeroes"]
+    return "Unknown PEP 440 error."
+
+def validate_version(version):
+    """ Validates the version format based on PEP 440 """
+    try:
+        Version(version)  # Raises InvalidVersion if not PEP 440 compliant
+    except InvalidVersion:
+        hint = get_hint(version)
+        print(f"ERROR: Version '{version}' is NOT PEP 440 compliant.\nHint: {hint}\n{PEP440_REFERENCE}")
+        sys.exit(1)
+
+    print(f"Version '{version}' is valid.")
+
+def validate_version_with_branch(branch_name, version, is_final_release):
+    """ Ensures non-main branches use pre-release versions """
+    print(f"Final release: {is_final_release}")
+    if branch_name != "main":
+        if re.match(r"^\d+\.\d+\.\d+$", version):  # Strict major.minor.patch without suffix
+            raise ValueError("ERROR: A pre-release suffix (e.g., '-beta', '-rc1') is required for non-main branches.")
+    elif branch_name == "main" and is_final_release and not re.match(r"^\d+\.\d+\.\d+$", version):
+        raise ValueError(
+            f"Error: Pre-release versions like '{version}' are not allowed for final release.\n"
+            f"Allowed format for main: X.Y.Z (e.g., 1.2.3)"
+        )
+
+    print(f"Version '{version}' is valid for branch '{branch_name}'.")
+
+def compare_versions(old_version, new_version):
+    """ Compares old and new versions to ensure the new version is greater """
+    old = Version(old_version)
+    new = Version(new_version)
+
+    if new > old:
+        print(f"New version ({new}) is greater than old version ({old}).")
+    elif new < old:
+        sys.exit(f"ERROR: New version ({new}) is lower than old version ({old}).")
+
+    # Ensure suffix (if present) is different
+    old_suffix = str(old).split('-')[-1] if '-' in str(old) else ''
+    new_suffix = str(new).split('-')[-1] if '-' in str(new) else ''
+
+    if old_suffix and old_suffix == new_suffix:
+        sys.exit(f"ERROR: Version suffix cannot be the same. Old: '{old_suffix}', New: '{new_suffix}'.")
+
+    print("Suffix validation passed.")
